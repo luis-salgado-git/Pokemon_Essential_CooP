@@ -1,0 +1,24 @@
+# --- Archivos de Guardado y Partidas ---
+# En RPG Maker XP, Game.rxdata suele ser el archivo de guardado local
+Game.rxdata
+Save*.rxdata
+
+# --- Backups automáticos del Editor ---
+# RPG Maker a veces crea copias con ~ o .bak al guardar
+*.rxdata~
+*.bak
+*.rvdata~
+*.rvdata2~
+
+# --- Logs de Errores ---
+errorlog.txt
+
+# --- Archivos del Sistema Operativo ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- (Opcional) Audio y Gráficos pesados si superan 100MB ---
+# GitHub bloquea archivos de más de 100MB.
+# Si tienes un .mp3 o video gigante, añádelo aquí, pero
+# para el kit base de Essentials no suele hacer falta.
