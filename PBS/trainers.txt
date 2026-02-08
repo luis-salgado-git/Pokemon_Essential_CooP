@@ -116,3 +116,6 @@ Pokemon = CHARIZARD,63
     Item = SITRUSBERRY
 Pokemon = BLASTOISE,63
     Item = SITRUSBERRY
+#-------------------------------
+[POKEMONTRAINER_Brendan,Brendan]
+Pokemon = TREECKO,5
