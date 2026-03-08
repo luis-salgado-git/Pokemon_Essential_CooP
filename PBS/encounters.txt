@@ -309,3 +309,44 @@ Land,21
     10,PIKACHU,11,14
     10,SANDSHREW_1,11,14
     10,VULPIX_1,11,14
+#-------------------------------
+[022] # Safari de Pruebas: Solo Gen 1-5
+Land, 21
+6, WHISMUR, 5, 7
+6, LITWICK, 5, 7
+6, POLIWAG, 5, 7
+6, HOPPIP, 5, 7
+6, MAREEP, 5, 7
+6, SWINUB, 5, 7
+6, MACHOP, 5, 7
+6, ZUBAT, 5, 7
+6, TRAPINCH, 5, 7
+6, STARLY, 5, 7
+5, RALTS, 5, 7
+5, CATERPIE, 5, 7
+5, GEODUDE, 5, 7
+5, GASTLY, 5, 7
+5, AXEW, 5, 7
+5, SANDILE, 5, 7
+5, ARON, 5, 7
+5, TOGEPI, 5, 7
+LandNight, 21
+6, LILLIPUP, 5, 7
+6, MAGBY, 5, 7
+6, LOTAD, 5, 7
+6, BELLSPROUT, 5, 7
+6, SHINX, 5, 7
+6, VANILLITE, 5, 7
+6, TIMBURR, 5, 7
+6, NIDORANmA, 5, 7
+6, GIBLE, 5, 7
+6, PIDOVE, 5, 7
+5, ABRA, 5, 7
+5, WEEDLE, 5, 7
+5, ROGGENROLA, 5, 7
+5, DUSKULL, 5, 7
+5, BAGON, 5, 7
+5, DEINO, 5, 7
+5, MAGNEMITE, 5, 7
+5, CLEFFA, 5, 7
+#-------------------------------

@@ -118,4 +118,20 @@ Pokemon = BLASTOISE,63
     Item = SITRUSBERRY
 #-------------------------------
 [POKEMONTRAINER_Brendan,Brendan]
+LoseText = ...
 Pokemon = TREECKO,5
+#-------------------------------
+[YOUNGSTER,Luis]
+LoseText = ¡Vaya paliza me habéis dado entre los dos!
+Pokemon = PIDGEY,1
+Pokemon = RATTATA,1
+#-------------------------------
+[LADY,RITA]
+LoseText = Necesito estar sola.
+Pokemon = PSYDUCK,6
+#-------------------------------
+[HIKER,TORIBIO]
+LoseText = Metanse en sus propios asuntos.
+Pokemon = NOSEPASS,5
+
+
