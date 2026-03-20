@@ -350,3 +350,10 @@ LandNight, 21
 5, MAGNEMITE, 5, 7
 5, CLEFFA, 5, 7
 #-------------------------------
+[080] # Sotano Oculto
+Cave,5
+    20,GEODUDE,3,5
+    20,ZUBAT,3,5
+    30,SCRAGGY,3,5
+    30,GASTLY,3,5
+#-------------------------------

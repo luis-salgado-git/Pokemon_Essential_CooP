@@ -260,6 +260,18 @@ Gender = Male
 BaseMoney = 4
 SkillLevel = 16
 #-------------------------------
+[VETERAN]
+Name = Veteran
+Gender = Male
+BaseMoney = 4
+SkillLevel = 16
+#-------------------------------
+[POKEFAN]
+Name = Pokefan
+Gender = Male
+BaseMoney = 4
+SkillLevel = 16
+#-------------------------------
 [TUBER2_F]
 Name = Tuber
 Gender = Female

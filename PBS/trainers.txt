@@ -121,17 +121,47 @@ Pokemon = BLASTOISE,63
 LoseText = ...
 Pokemon = TREECKO,5
 #-------------------------------
-[YOUNGSTER,Luis]
-LoseText = ¡Vaya paliza me habéis dado entre los dos!
-Pokemon = PIDGEY,1
-Pokemon = RATTATA,1
-#-------------------------------
-[LADY,RITA]
+[LADY,Rita]
 LoseText = Necesito estar sola.
+Pokemon = EEVEE,3
+#-------------------------------
+[HIKER,Toribio]
+LoseText = Metanse en sus propios asuntos.
+Pokemon = NOSEPASS,3
+#-------------------------------
+[COOLTRAINER_M,Luis]
+LoseText = Te dejaré creer que has ganado por ahora.
+Pokemon = CHARMANDER,5
+    Moves = SCRATCH,GROWL,EMBER
+    Item = ORANBERRY
+    Nature = TIMID
+    Shiny = true
+#-------------------------------
+[COOLTRAINER_M,Raymond]
+LoseText = Necesito comprar más RestauraTodo.
+Pokemon = CYNDAQUIL,5
+    Moves = SCRATCH,GROWL,EMBER
+    Item = ORANBERRY
+    Nature = TIMID
+    Shiny = true
+#-------------------------------
+[VETERAN,Silas]
+LoseText = Que creen que hacen??
 Pokemon = PSYDUCK,6
 #-------------------------------
-[HIKER,TORIBIO]
-LoseText = Metanse en sus propios asuntos.
+[POKEFAN,Hector]
+LoseText = Esto no puede estar pasando.
 Pokemon = NOSEPASS,5
-
-
+#-------------------------------
+[YOUNGSTER,Jose]
+LoseText = ...
+Pokemon = BULBASAUR,5
+Pokemon = VENIPEDE,5
+Pokemon = SPEAROW,5
+#-------------------------------
+[CHANNELER,Yanitza]
+LoseText = Que creen que hacen??
+Pokemon = PSYDUCK,5
+Pokemon = SLOWPOKE,5
+Pokemon = SLOWPOKE,7
+Pokemon = PSYDUCK,7
