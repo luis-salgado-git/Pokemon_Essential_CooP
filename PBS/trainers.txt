@@ -123,7 +123,7 @@ Pokemon = TREECKO,5
 #-------------------------------
 [LADY,Rita]
 LoseText = Necesito estar sola.
-Pokemon = EEVEE,3
+Pokemon = PURRLOIN,3
 #-------------------------------
 [HIKER,Toribio]
 LoseText = Metanse en sus propios asuntos.
@@ -131,15 +131,33 @@ Pokemon = NOSEPASS,3
 #-------------------------------
 [COOLTRAINER_M,Luis]
 LoseText = Te dejaré creer que has ganado por ahora.
-Pokemon = CHARMANDER,5
+Pokemon = CHARMANDER,11
     Moves = SCRATCH,GROWL,EMBER
     Item = ORANBERRY
     Nature = TIMID
     Shiny = true
 #-------------------------------
 [COOLTRAINER_M,Raymond]
-LoseText = Necesito comprar más RestauraTodo.
-Pokemon = CYNDAQUIL,5
+LoseText = Necesito comprar más pociones.
+Pokemon = CYNDAQUIL,11
+    Moves = SCRATCH,GROWL,EMBER
+    Item = ORANBERRY
+    Nature = TIMID
+    Shiny = true
+#-------------------------------
+[COOLTRAINER_M,Luis_2]
+LoseText = Te dejaré creer que has ganado por ahora.
+Pokemon = JOLTEON,25
+Pokemon = CHARMANDER,26
+    Moves = SCRATCH,GROWL,EMBER
+    Item = ORANBERRY
+    Nature = TIMID
+    Shiny = true
+#-------------------------------
+[COOLTRAINER_M,Raymond_2]
+LoseText = Necesito comprar más pociones.
+Pokemon = TRAPINCH,25
+Pokemon = CYNDAQUIL,26
     Moves = SCRATCH,GROWL,EMBER
     Item = ORANBERRY
     Nature = TIMID
@@ -147,11 +165,11 @@ Pokemon = CYNDAQUIL,5
 #-------------------------------
 [VETERAN,Silas]
 LoseText = Que creen que hacen??
-Pokemon = PSYDUCK,6
+Pokemon = URSARING,6
 #-------------------------------
 [POKEFAN,Hector]
-LoseText = Esto no puede estar pasando.
-Pokemon = NOSEPASS,5
+LoseText = Dejen de incordiar.
+Pokemon = STANTLER,5
 #-------------------------------
 [YOUNGSTER,Jose]
 LoseText = ...
@@ -160,8 +178,13 @@ Pokemon = VENIPEDE,5
 Pokemon = SPEAROW,5
 #-------------------------------
 [CHANNELER,Yanitza]
-LoseText = Que creen que hacen??
-Pokemon = PSYDUCK,5
-Pokemon = SLOWPOKE,5
-Pokemon = SLOWPOKE,7
-Pokemon = PSYDUCK,7
+LoseText = ...
+Pokemon = PSYDUCK,9
+Pokemon = PIDGEY,7
+Pokemon = RATTATA,8
+Pokemon = PSYDUCK,8
+#-------------------------------
+[CHANNELER,GOD]
+LoseText = ...
+Pokemon = MRMIME,90
+Pokemon = DRIFBLIM,90
