@@ -1,0 +1,1836 @@
+# -------------------------------------------------------------------------
+# 1. CONFIGURACIÓN
+# -------------------------------------------------------------------------
+module CoopConfig
+  EVENT_ID      = 50
+  RIVAL_GRAPHIC = "trainer_POKEMONTRAINER_Brendan"
+  
+  # ID del Metadata de Personaje para Brendan
+  BRENDAN_PLAYER_ID = 1 
+  
+  # --- [NUEVO] PUNTO DE RESPAWN INICIAL ---
+  # Si pierden antes de curar por primera vez, aparecerán aquí.
+  DEFAULT_RESPAWN_MAP = 77   # ID del Mapa
+  DEFAULT_RESPAWN_X   = 3  # Coordenada X
+  DEFAULT_RESPAWN_Y   = 6  # Coordenada Y
+
+  KEYS = {
+    :UP     => 0x49, # I
+    :LEFT   => 0x4A, # J
+    :DOWN   => 0x4B, # K
+    :RIGHT  => 0x4C, # L
+    :ACCEPT => 0x47, # G (Interactuar)
+    :CANCEL => 0x48  # H (Menú / Cancelar)
+  }
+  
+  # --- [NUEVO] LEVEL CAPS (LÍMITES DE NIVEL) ---
+  # El orden es: [0 Medallas, 1 Medalla, 2 Medallas, etc...]
+  LEVEL_CAPS = [14, 20, 26, 32, 38, 44, 50, 56, 100]
+
+  def self.current_level_cap
+    badges = $player ? $player.badge_count : 0
+    cap = LEVEL_CAPS[badges]
+    return cap ? cap : 100 # Si tienen más medallas que la lista, el límite es 100
+  end
+  # ---------------------------------------------
+  
+  def self.validate_event_id(map_id)
+    map = load_data(sprintf("Data/Map%03d.rxdata", map_id))
+    if map.events[EVENT_ID]
+      # Console.echo("[ALERTA COOP] Conflicto de ID en mapa #{map_id}")
+    end
+  end
+end
+
+# -------------------------------------------------------------------------
+# 2. PERSISTENCIA Y GESTIÓN DE DATOS
+# -------------------------------------------------------------------------
+
+module CoopStorage
+  VAR_ID = 100
+
+  def self.add_pokemon(species, level = 5)
+    pkmn = Pokemon.new(species, level)
+    $game_variables[VAR_ID] = [] if !$game_variables[VAR_ID].is_a?(Array)
+    # Enlazamos el límite a la constante global del motor
+    $game_variables[VAR_ID].push(pkmn) if $game_variables[VAR_ID].length < Settings::MAX_PARTY_SIZE
+  end
+
+  def self.get_party
+    $game_variables[VAR_ID] = [] if !$game_variables[VAR_ID].is_a?(Array)
+    return $game_variables[VAR_ID]
+  end
+
+  # --- NUEVO: DISCO DURO BLINDADO EN LA GLOBAL ---
+  def self.get_pc
+    if $PokemonGlobal.partner.is_a?(Array)
+      # El índice 4 del array partner será exclusivamente el PC de Brendan
+      if !$PokemonGlobal.partner[4].is_a?(PokemonStorage)
+        Console.echo("[PC COOP] Formateando y creando nuevo disco duro para Brendan...")
+        $PokemonGlobal.partner[4] = PokemonStorage.new
+      end
+      return $PokemonGlobal.partner[4]
+    end
+    # Fallback de emergencia
+    Console.echo("[PC COOP] ALERTA: Accediendo a PC sin partner activo.")
+    $game_temp.coop_fallback_pc ||= PokemonStorage.new
+    return $game_temp.coop_fallback_pc
+  end
+
+  def self.save_party_from_global
+    if $PokemonGlobal.partner.is_a?(Array)
+      updated_party = $PokemonGlobal.partner[3]
+      if updated_party
+        $game_variables[VAR_ID] = updated_party
+      end
+    end
+  end
+
+  def self.save_party_direct(party)
+    $game_variables[VAR_ID] = party
+  end
+
+  def self.give_starter(species, level = 5)
+    add_pokemon(species, level)
+    p2_name = $game_variables[12].is_a?(String) ? $game_variables[12] : "Brendan"
+    # Añadimos el hueco extra (nil) para el PC, que se llenará al llamarlo
+    $PokemonGlobal.partner = [:POKEMONTRAINER_Brendan, p2_name, 0, get_party, nil]
+    pkmn_name = GameData::Species.get(species).name
+    Kernel.pbMessage("¡#{p2_name} recibió a #{pkmn_name}!")
+  end
+
+  # --- MAGIA NEGRA: SOBRESCRIBIR IDENTIDAD ---
+  def self.apply_brendan_disguise
+    partner_name = $PokemonGlobal.partner ? $PokemonGlobal.partner[1] : "Brendan"
+    $player.define_singleton_method(:name) { return partner_name }
+    $player.define_singleton_method(:trainer_type) { return :POKEMONTRAINER_Brendan }
+  end
+
+  def self.remove_brendan_disguise
+    begin
+      $player.singleton_class.send(:remove_method, :name)
+      $player.singleton_class.send(:remove_method, :trainer_type)
+    rescue
+    end
+  end
+end
+
+# -------------------------------------------------------------------------
+# 3. GESTIÓN DE MENÚS (VERSIÓN BALANCEADA - SIN BOTÓN, PERO CON MOTOR)
+# -------------------------------------------------------------------------
+
+module CoopMenu
+  def self.open_menu
+    $game_temp.coop_control_p2 = true
+
+    commands = [
+      _INTL("Equipo Pokémon"),
+      _INTL("Mochila"),
+      _INTL("Salir")
+    ]
+
+    loop do
+      p2_name = $PokemonGlobal.partner ? $PokemonGlobal.partner[1] : "Brendan"
+      choice = Kernel.pbMessage(_INTL("Menú de {1}", p2_name), commands, -1)
+
+      case choice
+      when 0 then open_p2_party_screen
+      when 1 then open_shared_bag
+      else break
+      end
+    end
+
+    $game_temp.coop_control_p2 = false
+  end
+
+  def self.open_p2_party_screen
+    p2_party = CoopStorage.get_party
+    if p2_party.empty?
+      Kernel.pbMessage(_INTL("El Jugador 2 no tiene Pokémon."))
+      return
+    end
+
+    backup_party = $player.party
+    $player.party = p2_party
+
+    pbFadeOutIn {
+      scene  = PokemonParty_Scene.new
+      screen = PokemonPartyScreen.new(scene, $player.party)
+      screen.pbPokemonScreen
+    }
+
+    CoopStorage.save_party_direct($player.party)
+    $player.party = backup_party
+  end
+
+  def self.open_shared_bag
+    pbFadeOutIn {
+      scene  = PokemonBag_Scene.new
+      screen = PokemonBagScreen.new(scene, $bag)
+      screen.pbStartScreen
+    }
+  end
+
+  # --- EL MOTOR DEL PC (Oculto del menú portátil, pero vivo para el mostrador) ---
+  def self.open_p2_pc_screen
+    Console.echo("\n[PC COOP] --- INICIANDO SECUENCIA DE ACCESO AL PC ---")
+    p2_party = CoopStorage.get_party
+    p2_pc = CoopStorage.get_pc
+
+    Console.echo("[PC COOP] Haciendo backup del disco duro de Red...")
+    backup_party = $player.party
+    backup_pc    = $PokemonStorage
+
+    Console.echo("[PC COOP] Inyectando datos de Brendan y activando disfraz de identidad...")
+    $player.party   = p2_party
+    $PokemonStorage = p2_pc
+    CoopStorage.apply_brendan_disguise # ¡Engañamos al motor visual!
+
+    Console.echo("[PC COOP] Abriendo interfaz nativa...")
+    pbFadeOutIn {
+      scene  = PokemonStorageScene.new
+      screen = PokemonStorageScreen.new(scene, $PokemonStorage)
+      screen.pbStartScreen(0)
+    }
+
+    Console.echo("[PC COOP] Interfaz cerrada. Restaurando identidad y datos de Red...")
+    CoopStorage.save_party_direct($player.party)
+    
+    $player.party   = backup_party
+    $PokemonStorage = backup_pc
+    CoopStorage.remove_brendan_disguise
+    Console.echo("[PC COOP] --- SECUENCIA DE PC COMPLETADA ---\n")
+  end
+end
+
+# -------------------------------------------------------------------------
+# 4. INPUT DRIVER (CON MODO EMERGENCIA)
+# -------------------------------------------------------------------------
+module CoopInput
+  @api = Win32API.new("user32", "GetAsyncKeyState", ["i"], "i")
+  
+  @current_presses = {}
+  @current_triggers = {}
+  @last_presses = {}
+
+  module_function
+
+  def update
+    CoopConfig::KEYS.each do |action, key_code|
+      is_down = (@api.call(key_code) & 0x8000) != 0
+      @current_triggers[action] = is_down && !@last_presses[action]
+      @current_presses[action]  = is_down
+      @last_presses[action]     = is_down
+    end
+  end
+
+  def trigger?(action); @current_triggers[action]; end
+  def press?(action);   @current_presses[action]; end
+end
+
+class Game_Temp
+  attr_accessor :coop_control_p2
+  attr_accessor :coop_p2_evolve_check
+  attr_accessor :coop_last_interactor
+  attr_accessor :coop_emergency_mode # <--- ¡NUEVO! Bandera de rescate
+end
+
+module Input
+  class << self
+    if !defined?(@@coop_input_aliased)
+      alias :update_coop_original  :update
+      alias :trigger_coop_original :trigger?
+      alias :repeat_coop_original  :repeat?
+      alias :press_coop_original   :press?
+      alias :dir4_coop_original    :dir4
+      alias :dir8_coop_original    :dir8
+      @@coop_input_aliased = true
+    end
+
+    def update
+      CoopInput.update
+      update_coop_original
+    end
+    
+    def coop_active?
+      return false if !$game_temp
+      
+      # 1. MODO EMERGENCIA (Brendan pelea solo por Red)
+      return true if $game_temp.coop_emergency_mode
+      
+      # 2. MODO BATALLA NORMAL (Dobles)
+      if $game_temp.in_battle; return $game_temp.coop_control_p2; end
+      
+      # 3. MODO MENÚ / MAPA
+      return true if $game_temp.coop_control_p2
+      if $game_system && $game_system.map_interpreter && $game_system.map_interpreter.running?
+        return true if $game_temp.coop_last_interactor == 2
+      end
+      return false
+    end
+
+    def trigger?(key)
+      if coop_active?
+        return true if (key == Input::USE || key == Input::C) && CoopInput.trigger?(:ACCEPT)
+        return true if (key == Input::BACK || key == Input::B) && CoopInput.trigger?(:CANCEL)
+        return true if (key == Input::UP)    && CoopInput.trigger?(:UP)
+        return true if (key == Input::DOWN)  && CoopInput.trigger?(:DOWN)
+        return true if (key == Input::LEFT)  && CoopInput.trigger?(:LEFT)
+        return true if (key == Input::RIGHT) && CoopInput.trigger?(:RIGHT)
+        return false 
+      end
+      return trigger_coop_original(key)
+    end
+
+    def repeat?(key)
+      if coop_active?
+        return true if (key == Input::USE || key == Input::C) && CoopInput.press?(:ACCEPT)
+        return true if (key == Input::BACK || key == Input::B) && CoopInput.trigger?(:CANCEL)
+        return true if (key == Input::UP)    && CoopInput.trigger?(:UP)
+        return true if (key == Input::DOWN)  && CoopInput.trigger?(:DOWN)
+        return true if (key == Input::LEFT)  && CoopInput.trigger?(:LEFT)
+        return true if (key == Input::RIGHT) && CoopInput.trigger?(:RIGHT)
+        return false
+      end
+      return repeat_coop_original(key)
+    end
+    
+    def press?(key)
+      if coop_active?
+        return true if (key == Input::USE || key == Input::C) && CoopInput.press?(:ACCEPT)
+        return true if (key == Input::BACK || key == Input::B) && CoopInput.press?(:CANCEL)
+        return true if (key == Input::UP)    && CoopInput.press?(:UP)
+        return true if (key == Input::DOWN)  && CoopInput.press?(:DOWN)
+        return true if (key == Input::LEFT)  && CoopInput.press?(:LEFT)
+        return true if (key == Input::RIGHT) && CoopInput.press?(:RIGHT)
+        return false
+      end
+      return press_coop_original(key)
+    end
+
+    def dir4
+      if coop_active?
+        return 8 if CoopInput.press?(:UP)
+        return 2 if CoopInput.press?(:DOWN)
+        return 4 if CoopInput.press?(:LEFT)
+        return 6 if CoopInput.press?(:RIGHT)
+        return 0
+      end
+      return dir4_coop_original
+    end
+
+    def dir8
+      if coop_active?
+        return 8 if CoopInput.press?(:UP)
+        return 2 if CoopInput.press?(:DOWN)
+        return 4 if CoopInput.press?(:LEFT)
+        return 6 if CoopInput.press?(:RIGHT)
+        return 0
+      end
+      return dir8_coop_original
+    end
+  end
+end
+# -------------------------------------------------------------------------
+# 5. CONTROLADOR DE MAPA (MOVIMIENTO NATIVO, TAP-TO-TURN, PUERTAS Y RADAR)
+# -------------------------------------------------------------------------
+class CoopController
+  @@interaction_wait = 0
+  
+  # --- VARIABLES DE CACHÉ PARA OPTIMIZAR EL RADAR PASIVO ---
+  @@trainers_cache = []
+  @@cached_map_id = -1
+
+  # --- VARIABLES PARA EL TAP-TO-TURN ---
+  @@p2_lastdir = 0
+  @@p2_lastdirframe = 0.0
+
+  def self.update
+    return unless $scene.is_a?(Scene_Map) && $game_map && !$game_temp.in_battle
+    
+    if $game_temp.message_window_showing || 
+       $game_system.map_interpreter.running? || 
+       $game_player.move_route_forcing ||
+       $game_temp.in_menu
+       return
+    end
+
+    # --- SISTEMA DE CACHÉ DE ENTRENADORES (Cero Lag) ---
+    if @@cached_map_id != $game_map.map_id
+      @@trainers_cache = []
+      $game_map.events.values.each do |e|
+        if e.name =~ /Trainer\((\d+)\)/i || e.name =~ /Sight\((\d+)\)/i
+          @@trainers_cache << [e, $1.to_i]
+        end
+      end
+      @@cached_map_id = $game_map.map_id
+    end
+
+    # --- EL EXTERMINADOR DE CLONES ---
+    if $map_factory
+      $map_factory.maps.each do |map|
+        clone = map.events[CoopConfig::EVENT_ID]
+        next unless clone
+        
+        if map.map_id == $game_map.map_id
+          if clone.transparent
+            clone.moveto($game_player.x, $game_player.y) if $game_player
+            clone.transparent = false 
+          end
+        else
+          clone.transparent = true  
+        end
+      end
+    end
+    
+    # --- CHECK DE EVOLUCIÓN ---
+    if $game_temp.coop_p2_evolve_check
+      $game_temp.coop_p2_evolve_check = false
+      perform_p2_evolution
+      return 
+    end
+
+    event = $game_map.events[CoopConfig::EVENT_ID]
+    return unless event
+
+    if @@interaction_wait > 0
+      @@interaction_wait -= 1
+      event.straighten unless event.moving?
+      return 
+    end
+
+    # FLUJO PRINCIPAL DE BRENDAN
+    update_native_movement(event)
+    check_native_interaction(event)
+    check_trainer_sight(event) # Radar Pasivo (Funciona aunque Brendan esté quieto)
+    check_menu_access 
+  end
+
+  def self.perform_p2_evolution
+    return unless $PokemonGlobal.partner
+    brendan_party = CoopStorage.get_party
+    changed = false
+    brendan_party.each do |pkmn|
+      next if !pkmn.able? || pkmn.egg?
+      new_species = pkmn.check_evolution_on_level_up
+      if new_species
+        pbFadeOutInWithMusic {
+          evo_process = ::PokemonEvolutionScene.new
+          evo_process.pbStartScreen(pkmn, new_species)
+          evo_process.pbEvolution
+          evo_process.pbEndScreen
+        }
+        changed = true if pkmn.species == new_species
+      end
+    end
+    CoopStorage.save_party_from_global if changed
+  end
+
+  def self.check_menu_access
+    if CoopInput.trigger?(:CANCEL)
+      CoopMenu.open_menu
+      @@interaction_wait = 20
+    end
+  end
+
+  # === MOVIMIENTO NATIVO Y TAP-TO-TURN ===
+  def self.update_native_movement(event)
+    return if event.moving? || event.jumping?
+    
+    old_x = event.x
+    old_y = event.y
+
+    dir = 0
+    dir = 8 if CoopInput.press?(:UP)
+    dir = 2 if CoopInput.press?(:DOWN)
+    dir = 4 if CoopInput.press?(:LEFT)
+    dir = 6 if CoopInput.press?(:RIGHT)
+
+    if dir > 0
+      # [FIX TAP TO TURN]: Si lleva pulsando > 75ms, camina.
+      if dir == @@p2_lastdir && (System.uptime - @@p2_lastdirframe >= 0.075)
+        case dir
+        when 2 then event.move_down
+        when 4 then event.move_left
+        when 6 then event.move_right
+        when 8 then event.move_up
+        end
+
+        if event.x != old_x || event.y != old_y
+          check_p2_triggers_here(event)
+          check_p2_encounter(event)
+        else
+          # Si chocó, miramos si era una puerta
+          check_p2_trigger_touch(event, dir)
+        end
+        
+      elsif dir != @@p2_lastdir
+        # Si es un toque rápido, solo gira en el sitio.
+        case dir
+        when 2 then event.turn_down
+        when 4 then event.turn_left
+        when 6 then event.turn_right
+        when 8 then event.turn_up
+        end
+      end
+      
+      # Guardamos el tiempo exacto del primer contacto
+      @@p2_lastdirframe = System.uptime if dir != @@p2_lastdir
+      @@p2_lastdir = dir
+    else
+      # Si suelta todas las teclas, limpiamos la memoria
+      @@p2_lastdir = 0
+      event.straighten unless event.moving?
+    end
+  end
+
+  def self.check_p2_trigger_touch(event, dir)
+    check_x = event.x
+    check_y = event.y
+    case dir
+    when 2 then check_y += 1
+    when 4 then check_x -= 1
+    when 6 then check_x += 1
+    when 8 then check_y -= 1
+    end
+    
+    $game_map.events.values.each do |e|
+      next if e.x != check_x || e.y != check_y
+      if e.trigger == 1 || e.trigger == 2
+        $game_temp.coop_last_interactor = 2
+        e.start
+        return true
+      end
+    end
+    return false
+  end
+
+  def self.check_p2_triggers_here(p2_event)
+    $game_map.events.values.each do |e|
+      next if e == p2_event
+      next if e.x != p2_event.x || e.y != p2_event.y
+      if e.trigger == 1 || e.trigger == 2
+        $game_temp.coop_last_interactor = 2
+        e.start
+        return 
+      end
+    end
+  end
+
+  def self.check_native_interaction(event)
+    if CoopInput.trigger?(:ACCEPT)
+      check_x = event.x
+      check_y = event.y
+      
+      case event.direction
+      when 2 then check_y += 1
+      when 4 then check_x -= 1
+      when 6 then check_x += 1
+      when 8 then check_y -= 1
+      end
+
+      if $game_map.counter?(check_x, check_y)
+        case event.direction
+        when 2 then check_y += 1
+        when 4 then check_x -= 1
+        when 6 then check_x += 1
+        when 8 then check_y -= 1
+        end
+      end
+
+      target = $game_map.events.values.find { |e| 
+        e.x == check_x && e.y == check_y && !e.jumping? && e != event 
+      }
+      return unless target 
+      
+      $game_temp.coop_last_interactor = 2 
+      
+      # [FIX] Eliminada la restricción de los Self Switches A y B.
+      # Solo verificamos que la página activa del evento tenga una lista de comandos válida.
+      return if target.list.nil?
+      
+      @@interaction_wait = 30 
+      event.straighten
+      target.start
+    end
+  end
+
+  # =======================================================================
+  # RADAR DE ENTRENADORES (NATIVO Y OPTIMIZADO)
+  # =======================================================================
+  def self.check_trainer_sight(p2_event)
+    return if $game_system.map_interpreter.running? || @@interaction_wait > 0
+
+    @@trainers_cache.each do |data|
+      event = data[0]
+      distance = data[1]
+      
+      key_a = [$game_map.map_id, event.id, "A"]
+      key_b = [$game_map.map_id, event.id, "B"]
+      next if $game_self_switches[key_a] || $game_self_switches[key_b]
+
+      next if event.jumping? || event.over_trigger? || event.list.nil?
+      
+      # Usamos la visión nativa del motor
+      next if !pbEventCanReachPlayer?(event, p2_event, distance)
+
+      $game_temp.coop_last_interactor = 2 
+      @@interaction_wait = 60
+      event.start
+      return
+    end
+  end
+
+  def self.check_p2_encounter(event)
+    if $PokemonGlobal.repel > 0; return; end
+
+    terrain = $game_map.terrain_tag(event.x, event.y)
+    enc_type = nil
+    
+    if terrain.can_surf
+       enc_type = :Water
+    elsif terrain.shows_grass_rustle || terrain.id_number == 4 || terrain.id_number == 2 || terrain.id == :Cave
+       if $PokemonEncounters.has_encounter_type?(:Cave)
+         enc_type = :Cave
+       elsif $PokemonEncounters.has_encounter_type?(:Land)
+         enc_type = :Land
+       end
+    else
+       map_metadata = GameData::MapMetadata.try_get($game_map.map_id)
+       if map_metadata && !map_metadata.outdoor_map && $PokemonEncounters.has_encounter_type?(:Cave)
+         enc_type = :Cave
+       end
+    end
+    
+    return unless enc_type
+    
+    if rand(100) < 15
+      return unless $PokemonEncounters.has_encounter_type?(enc_type)
+      pokemon1 = $PokemonEncounters.choose_wild_pokemon(enc_type)
+      return unless pokemon1
+
+      event.straighten
+      @@interaction_wait = 20
+
+      p2_party = CoopStorage.get_party
+      if p2_party.length > 0 && p2_party.any? { |p| !p.fainted? }
+        if !$PokemonGlobal.partner
+          p2_name = $game_variables[12].is_a?(String) ? $game_variables[12] : "Brendan"
+          $PokemonGlobal.partner = [:POKEMONTRAINER_Brendan, p2_name, 0, p2_party]
+        else
+          $PokemonGlobal.partner[3] = p2_party
+        end
+        pokemon2 = $PokemonEncounters.choose_wild_pokemon(enc_type)
+        if pokemon2; WildBattle.start(pokemon1, pokemon2); else; WildBattle.start(pokemon1); end
+        CoopStorage.save_party_from_global
+      else
+        WildBattle.start(pokemon1)
+      end
+    end
+  end
+end
+# -------------------------------------------------------------------------
+# 6. INYECCIONES AL MOTOR (MAPA, SPAWN, CÁMARA Y RESPAWN)
+# -------------------------------------------------------------------------
+
+class Scene_Map
+  alias_method :update_coop_original, :update
+  def update
+    update_coop_original
+    CoopController.update
+  end
+end
+
+class Game_Map
+  alias_method :setup_coop_spawner, :setup
+  def setup(map_id)
+    setup_coop_spawner(map_id)
+    # Spawneamos a P2 siempre que el mapa cargue
+    spawn_player2 unless @events[CoopConfig::EVENT_ID]
+
+    # Verificamos si P2 tiene equipo para activar el co-op de batalla
+    p2_party = CoopStorage.get_party
+    if p2_party.length > 0
+      if !$PokemonGlobal.partner
+        pbRegisterPartner(:POKEMONTRAINER_Brendan, "Brendan", 0)
+        $PokemonGlobal.partner[3] = p2_party if $PokemonGlobal.partner.is_a?(Array)
+      end
+    else
+      $PokemonGlobal.partner = nil
+    end
+  end
+
+  def spawn_player2
+    rpg_event = RPG::Event.new(0, 0)
+    rpg_event.id     = CoopConfig::EVENT_ID
+    rpg_event.name = "Player2_Coop"
+
+    page = rpg_event.pages[0]
+    page.graphic.character_name = CoopConfig::RIVAL_GRAPHIC
+    page.graphic.character_hue  = 0
+    page.graphic.direction      = $game_player ? $game_player.direction : 2
+    page.walk_anime  = true
+    page.step_anime  = false
+    page.trigger     = 0
+    page.through     = false
+
+    ev = Game_Event.new(@map_id, rpg_event)
+    ev.transparent = true # Nacen invisibles para evitar parpadeos visuales
+
+    # --- [FIX COORDENADAS SEGURAS] ---
+    target_x = $game_player ? $game_player.x : 0
+    target_y = $game_player ? $game_player.y : 0
+    
+    # Si estamos en medio de un teletransporte (cruzando una puerta)
+    if $game_temp && $game_temp.player_new_map_id == @map_id
+      target_x = $game_temp.player_new_x || target_x
+      target_y = $game_temp.player_new_y || target_y
+    end
+
+    ev.moveto(target_x, target_y)
+    # ---------------------------------
+
+    @events[CoopConfig::EVENT_ID] = ev
+  end
+end
+
+class Game_Player < Game_Character
+  
+  if !defined?(@@coop_player_aliased)
+    alias check_event_trigger_here_coop_id check_event_trigger_here
+    alias check_event_trigger_there_coop_id check_event_trigger_there
+    alias check_event_trigger_touch_coop_id check_event_trigger_touch
+    @@coop_player_aliased = true
+  end
+
+  def check_event_trigger_here(triggers)
+    result = check_event_trigger_here_coop_id(triggers)
+    $game_temp.coop_last_interactor = 1 if result
+    return result
+  end
+
+  def check_event_trigger_there(triggers)
+    result = check_event_trigger_there_coop_id(triggers)
+    $game_temp.coop_last_interactor = 1 if result
+    return result
+  end
+
+  def check_event_trigger_touch(dir)
+    result = check_event_trigger_touch_coop_id(dir)
+    $game_temp.coop_last_interactor = 1 if result
+    return result
+  end
+
+
+
+  # =======================================================================
+  # MOTOR DE CÁMARA COMPARTIDA (SIN TIRONES)
+  # =======================================================================
+
+  def update_screen_position(last_real_x, last_real_y)
+    return unless $game_map
+    p2 = $game_map.events[CoopConfig::EVENT_ID]
+
+    # 1. Si Brendan no está, usamos la cámara nativa centrada en Red
+    if !p2
+      center_x = (Graphics.width  / 2 - Game_Map::TILE_WIDTH  / 2) * Game_Map::X_SUBPIXELS
+      center_y = (Graphics.height / 2 - Game_Map::TILE_HEIGHT / 2) * Game_Map::Y_SUBPIXELS
+
+      if (@real_x < last_real_x && @real_x < $game_map.display_x + center_x) ||
+         (@real_x > last_real_x && @real_x > $game_map.display_x + center_x)
+        self.map.display_x += @real_x - last_real_x
+      end
+      if (@real_y < last_real_y && @real_y < $game_map.display_y + center_y) ||
+         (@real_y > last_real_y && @real_y > $game_map.display_y + center_y)
+        self.map.display_y += @real_y - last_real_y
+      end
+      return
+    end
+
+    # 2. CÁMARA COMPARTIDA: Calculamos el punto exacto entre ambos
+    mid_x = ((self.real_x + p2.real_x) / 2.0)
+    mid_y = ((self.real_y + p2.real_y) / 2.0)
+
+    center_x = (Graphics.width  / 2 - Game_Map::TILE_WIDTH  / 2) * Game_Map::X_SUBPIXELS
+    center_y = (Graphics.height / 2 - Game_Map::TILE_HEIGHT / 2) * Game_Map::Y_SUBPIXELS
+
+    # Límites para que la cámara no se salga del mapa mostrando un fondo negro
+    max_x = ($game_map.width  * Game_Map::REAL_RES_X) - (Graphics.width  * Game_Map::X_SUBPIXELS)
+    max_y = ($game_map.height * Game_Map::REAL_RES_Y) - (Graphics.height * Game_Map::Y_SUBPIXELS)
+
+    target_x = (mid_x - center_x).clamp(0, [max_x, 0].max)
+    target_y = (mid_y - center_y).clamp(0, [max_y, 0].max)
+
+    # Actualizamos la cámara del motor
+    $game_map.display_x = target_x
+    $game_map.display_y = target_y
+  end
+end
+
+class Object
+  # Engañamos a la función global de visión para que el motor busque a ambos
+  if !defined?(@@coop_sight_aliased)
+    alias coop_original_pbEventCanReachPlayer? pbEventCanReachPlayer?
+    @@coop_sight_aliased = true
+  end
+
+  def pbEventCanReachPlayer?(event, target, distance)
+    # 1. Dejamos que el motor compruebe a Red de forma normal
+    if coop_original_pbEventCanReachPlayer?(event, target, distance)
+      $game_temp.coop_last_interactor = 1 if target == $game_player
+      return true
+    end
+    
+    # 2. Si el motor estaba buscando a Red y no lo vio, le decimos que mire a Brendan
+    if target == $game_player && $game_map
+      p2 = $game_map.events[CoopConfig::EVENT_ID]
+      if p2 && !p2.transparent
+        # Reutilizamos la función nativa apuntando a Brendan
+        if coop_original_pbEventCanReachPlayer?(event, p2, distance)
+          $game_temp.coop_last_interactor = 2 # Avisamos que Brendan fue el detectado
+          return true
+        end
+      end
+    end
+    
+    return false
+  end
+end
+# =========================================================================
+#  7. NÚCLEO DE BATALLA UNIFICADO (CONTROL, TARGETING Y XP)
+#  (Versión Final: Fix Jerarquía de Menús)
+# =========================================================================
+
+# -------------------------------------------------------------------------
+#  A. MODIFICACIONES AL COMBATIENTE (Battle::Battler)
+# -------------------------------------------------------------------------
+class Battle::Battler
+  # Bandera para evitar cobrar XP tres veces por el mismo kill
+  attr_accessor :xp_granted_flag
+
+  # Engañar al Battler para que se crea propiedad del jugador (si es P2)
+  alias :pbOwnedByPlayer_coop_battler :pbOwnedByPlayer?
+  def pbOwnedByPlayer?
+    return true if @index == 2 && $PokemonGlobal.partner
+    return pbOwnedByPlayer_coop_battler
+  end
+
+  # Si revive (Cura Total / Revivir), reseteamos el recibo de XP
+  alias :pbRecoverHP_protection_coop :pbRecoverHP
+  def pbRecoverHP(amount, anim = true)
+    ret = pbRecoverHP_protection_coop(amount, anim)
+    if @hp > 0 && @xp_granted_flag
+      @xp_granted_flag = false
+    end
+    return ret
+  end
+end
+
+# -------------------------------------------------------------------------
+#  B. MODIFICACIONES AL MOTOR DE BATALLA (Battle)
+# -------------------------------------------------------------------------
+class Battle
+  # Variable para bloquear el reordenamiento de turnos (Fix Doble Turno)
+  attr_accessor :coop_priority_lock
+
+  # 1. FIX PRIORIDAD: Evita que P1 repita turno tras un Level Up
+  alias :pbCalculatePriority_coop_fix :pbCalculatePriority
+  def pbCalculatePriority(*args)
+    return if @coop_priority_lock 
+    pbCalculatePriority_coop_fix(*args)
+  end
+
+  # 2. CONTROL DE PROPIEDAD: Engañamos al motor para que acepte inputs del P2
+  alias :pbOwnedByPlayer_coop_class :pbOwnedByPlayer?
+  def pbOwnedByPlayer?(idxBattler)
+    return true if idxBattler == 2 && $PokemonGlobal.partner
+    return pbOwnedByPlayer_coop_class(idxBattler)
+  end
+
+  # 3. ALIAS DE MENÚS: Habilitan las teclas para el P2
+  alias :pbCommandMenu_coop :pbCommandMenu
+  def pbCommandMenu(idxBattler, firstAction)
+    $game_temp.coop_control_p2 = (idxBattler == 2 && $PokemonGlobal.partner)
+    ret = pbCommandMenu_coop(idxBattler, firstAction)
+    $game_temp.coop_control_p2 = false
+    return ret
+  end
+
+  alias :pbFightMenu_coop :pbFightMenu
+  def pbFightMenu(idxBattler, &block)
+    $game_temp.coop_control_p2 = (idxBattler == 2 && $PokemonGlobal.partner)
+    ret = pbFightMenu_coop(idxBattler, &block)
+    $game_temp.coop_control_p2 = false
+    return ret
+  end
+
+  # --- [FIX JERARQUÍA] TARGETING ---
+  # Ahora usamos "previous_state" para no apagar el control si volvemos al menú anterior
+  alias :pbChooseTarget_coop :pbChooseTarget
+  def pbChooseTarget(battler, move)
+    # 1. Guardamos estado anterior (Si venimos de FightMenu, será TRUE)
+    previous_state = $game_temp.coop_control_p2
+    
+    # 2. Forzamos TRUE si es Brendan
+    if battler.index == 2 && $PokemonGlobal.partner
+       $game_temp.coop_control_p2 = true
+    end
+
+    # 3. Ejecutamos original
+    ret = pbChooseTarget_coop(battler, move)
+
+    # 4. RESTAURAMOS estado anterior (Si era TRUE, sigue siendo TRUE)
+    $game_temp.coop_control_p2 = previous_state
+    
+    return ret
+  end
+  # --------------------------------
+
+  alias :pbItemMenu_coop :pbItemMenu
+  def pbItemMenu(idxBattler, firstAction)
+    $game_temp.coop_control_p2 = (idxBattler == 2 && $PokemonGlobal.partner)
+    ret = pbItemMenu_coop(idxBattler, firstAction)
+    $game_temp.coop_control_p2 = false
+    return ret
+  end
+
+  alias :pbPartyMenu_coop :pbPartyMenu
+  def pbPartyMenu(idxBattler)
+    $game_temp.coop_control_p2 = (idxBattler == 2 && $PokemonGlobal.partner)
+    ret = pbPartyMenu_coop(idxBattler)
+    $game_temp.coop_control_p2 = false
+    return ret
+  end
+
+  alias :pbRunMenu_coop :pbRunMenu
+  def pbRunMenu(idxBattler)
+    $game_temp.coop_control_p2 = (idxBattler == 2 && $PokemonGlobal.partner)
+    ret = pbRunMenu_coop(idxBattler)
+    $game_temp.coop_control_p2 = false
+    return ret
+  end
+
+  # 4. FIX CRASH MENÚ POKÉMON (Matemáticas del Party Order)
+  def pbPlayerDisplayParty(idxBattler = 0)
+    partyOrders = pbPartyOrder(idxBattler)
+    idxStart, _idxEnd = pbTeamIndexRangeFromBattlerIndex(idxBattler)
+    ret = []
+    eachInTeamFromBattlerIndex(idxBattler) do |pkmn, i|
+      safe_order = partyOrders[i] || i
+      ret[safe_order - idxStart] = pkmn
+    end
+    return ret
+  end
+
+  # 5. SISTEMA DE EXPERIENCIA (Blindado contra loops y crashes)
+  def pbGainExp
+    @scene.pbWildBattleSuccess if wildBattle? && pbAllFainted?(1) && !pbAllFainted?(0)
+    return if !@internalBattle || !@expGain
+
+    # Lista de entrenadores humanos (0=Red, 2=Brendan)
+    human_indices = [0]
+    human_indices.push(2) if $PokemonGlobal.partner
+
+    @battlers.each do |b|
+      next unless b&.opposes? && (b.fainted? || b.captured)
+      
+      # SISTEMA DE RECIBO: Si ya pagó XP, saltar
+      next if b.xp_granted_flag 
+      b.xp_granted_flag = true
+
+      human_indices.each do |trainer_idx|
+        owner_party_idx = trainer_idx
+        
+        # Calcular participación
+        numPartic = 0
+        b.participants.each { |partic| numPartic += 1 if partic == trainer_idx }
+        
+        # Forzar participación de Brendan si está vivo
+        if trainer_idx == 2 && @battlers[2] && !@battlers[2].fainted?
+          numPartic = 1 if numPartic == 0
+        end
+
+        # Exp Share
+        expShare = []
+        team_id = (trainer_idx == 0) ? 0 : 1
+        eachInTeam(0, team_id) do |pkmn, i|
+          next if !pkmn.able?
+          expShare.push(i) if pkmn.hasItem?(:EXPSHARE)
+        end
+
+        if numPartic > 0 || expShare.length > 0
+          eachInTeam(0, team_id) do |pkmn, i|
+            next unless pkmn.able?
+            # Verificación estricta de participación
+            is_participant = (@battlers[trainer_idx] && @battlers[trainer_idx].pokemonIndex == i)
+            next unless is_participant || expShare.include?(i)
+
+            # Llamada segura a XP individual
+            pbGainExpOne_Coop(i, b, numPartic, expShare, false, owner_party_idx)
+          end
+        end
+      end
+      b.participants = []
+    end
+    $game_temp.coop_p2_evolve_check = true if $PokemonGlobal.partner
+  end
+
+  # 6. CÁLCULO INDIVIDUAL (Con Fix de HP, Prioridad, LEVEL CAP y LOGS)
+  def pbGainExpOne_Coop(idxParty, defeatedBattler, numPartic, expShare, expAll, owner_idx)
+    pkmn = pbParty(owner_idx)[idxParty]
+    growth_rate = pkmn.growth_rate
+    
+    Console.echo("[EXP COOP] --- INICIANDO REPARTO PARA: #{pkmn.name} ---")
+    
+    current_cap = CoopConfig.current_level_cap
+    Console.echo("[EXP COOP] Nivel actual: #{pkmn.level} | Limite (Cap): #{current_cap}")
+    
+    if pkmn.level >= current_cap || pkmn.exp >= growth_rate.maximum_exp
+      Console.echo("[EXP COOP] ABORTADO: Ha alcanzado el limite de nivel o EXP maxima.")
+      return 
+    end
+    
+    return if defeatedBattler.pokemon.nil?
+    
+    @coop_priority_lock = true 
+
+    level = defeatedBattler.level
+    base_xp = defeatedBattler.pokemon.respond_to?(:base_exp) ? defeatedBattler.pokemon.base_exp : GameData::Species.get(defeatedBattler.species).base_exp
+    
+    if base_xp == 0
+      Console.echo("[EXP COOP] ABORTADO: El enemigo da 0 EXP base.")
+      @coop_priority_lock = false; return 
+    end
+
+    exp = (level * base_xp) / [numPartic + expShare.length, 1].max
+    isOutsider = (pkmn.owner.id != pbPlayer.id)
+    exp = (exp * 1.5).floor if isOutsider
+    Battle::ItemEffects.triggerExpGainModifier(pkmn.item, pkmn, exp)
+    
+    if exp <= 0
+      Console.echo("[EXP COOP] ABORTADO: La EXP calculada es 0 o menor.")
+      @coop_priority_lock = false; return 
+    end
+
+    expFinal = growth_rate.add_exp(pkmn.exp, exp)
+    max_exp_for_cap = growth_rate.minimum_exp_for_level(current_cap)
+    
+    if expFinal > max_exp_for_cap
+      Console.echo("[EXP COOP] RECORTE: EXP truncada para no superar el nivel #{current_cap}.")
+      expFinal = max_exp_for_cap
+    end
+
+    expGained = expFinal - pkmn.exp
+    Console.echo("[EXP COOP] EXP a ganar: #{expGained}")
+    
+    if expGained <= 0
+      @coop_priority_lock = false; return 
+    end
+
+    if owner_idx == 2
+      pbDisplayPaused(_INTL("¡El {1} de Brendan ganó {2} Exp!", pkmn.name, expGained))
+    else
+      pbDisplayPaused(_INTL("{1} got {2} Exp. Points!", pkmn.name, expGained))
+    end
+
+    $stats.total_exp_gained += expGained
+    tempExp1 = pkmn.exp
+    battler = (owner_idx == 0 || owner_idx == 2) ? @battlers[owner_idx] : nil
+    battler = nil if battler && battler.pokemonIndex != idxParty
+
+    curLevel = pkmn.level
+    newLevel = growth_rate.level_from_exp(expFinal)
+    
+    Console.echo("[EXP COOP] Subida planificada: Nivel #{curLevel} -> #{newLevel}")
+
+    loop do
+      if battler
+        levelMinExp = growth_rate.minimum_exp_for_level(curLevel)
+        levelMaxExp = growth_rate.minimum_exp_for_level(curLevel + 1)
+        tempExp2 = [levelMaxExp, expFinal].min
+        pkmn.exp = tempExp2
+        @scene.pbEXPBar(battler, levelMinExp, levelMaxExp, tempExp1, tempExp2)
+        tempExp1 = tempExp2
+      else
+        pkmn.exp = expFinal
+      end
+
+      curLevel += 1
+      if curLevel > newLevel
+        pkmn.calc_stats
+        if battler
+          battler.pbUpdate(false)
+          old_total_hp = battler.totalhp
+          new_total_hp = pkmn.totalhp 
+          battler.instance_variable_set(:@totalhp, new_total_hp)
+          
+          hp_diff = new_total_hp - old_total_hp
+          battler.hp += hp_diff if hp_diff > 0 && !battler.fainted?
+          battler.attack  = pkmn.attack
+          battler.defense = pkmn.defense
+          battler.spatk   = pkmn.spatk
+          battler.spdef   = pkmn.spdef
+          battler.speed   = pkmn.speed
+          @scene.pbRefreshOne(battler.index)
+        end
+        $game_temp.coop_p2_evolve_check = true if owner_idx == 2
+        Console.echo("[EXP COOP] Bucle de niveles finalizado con exito.")
+        break
+      end
+
+      pbCommonAnimation("LevelUp", battler) if battler
+      
+      pkmn.calc_stats
+      if battler
+         battler.pbUpdate(false)
+         old_total_hp = battler.totalhp
+         new_total_hp = pkmn.totalhp 
+         battler.instance_variable_set(:@totalhp, new_total_hp)
+         hp_diff = new_total_hp - old_total_hp
+         battler.hp += hp_diff if hp_diff > 0 && !battler.fainted?
+         battler.attack  = pkmn.attack
+         battler.defense = pkmn.defense
+         battler.spatk   = pkmn.spatk
+         battler.spdef   = pkmn.spdef
+         battler.speed   = pkmn.speed
+      end
+
+      if owner_idx == 2
+        pbDisplayPaused(_INTL("¡{1} de Brendan subió a Nv. {2}!", pkmn.name, curLevel)) { pbSEPlay("Pkmn level up") }
+      else
+        pbDisplayPaused(_INTL("{1} grew to Lv. {2}!", pkmn.name, curLevel)) { pbSEPlay("Pkmn level up") }
+      end
+
+      pkmn.getMoveList.each { |m| pbLearnMove(idxParty, m[1]) if m[0] == curLevel }
+    end
+    
+    @coop_priority_lock = false
+    Console.echo("[EXP COOP] --- REPARTO COMPLETADO ---")
+  end
+end
+
+# =========================================================================
+#  8. SISTEMA DE CAPTURA COOPERATIVO (50-50, ETIQUETAS Y ALMACENAMIENTO)
+#  (Sustituye a las antiguas secciones 9 y 10)
+# =========================================================================
+
+# Diccionario global para saber quién capturó qué
+$COOP_CATCH_TAGS = {}
+
+# 1. HANDLERS DE OBJETOS: Permitir uso en dobles y bloqueo lógico
+ItemHandlers::CanUseInBattle.addIf(:poke_balls,
+  proc { |item| GameData::Item.get(item).is_poke_ball? },
+  proc { |item, pokemon, battler, move, firstAction, battle, scene, showMessages|
+    if battle.pbPlayer.party_full? && $PokemonStorage.full?
+      scene.pbDisplay(_INTL("There is no room left in the PC!")) if showMessages
+      next false
+    end
+    if battle.disablePokeBalls
+      scene.pbDisplay(_INTL("You can't throw a Poké Ball!")) if showMessages
+      next false
+    end
+    if battler.semiInvulnerable?
+      scene.pbDisplay(_INTL("It's no good! It's impossible to aim at a Pokémon that's not in sight!")) if showMessages
+      next false
+    end
+    # Nota: Hemos eliminado la restricción de "Más de 1 enemigo" para permitir captura en coop
+    next true
+  }
+)
+
+class Battle
+  attr_accessor :coop_thrower_id
+  attr_accessor :coop_rng_winner
+  attr_accessor :coop_rng_evaluated
+
+  # 2. EVITAR QUE P1 GASTE TODO EL TURNO AL LANZAR
+  alias :pbItemUsesAllActions_coop :pbItemUsesAllActions?
+  def pbItemUsesAllActions?(item)
+    if $PokemonGlobal.partner && GameData::Item.get(item).is_poke_ball?
+      return false # Solo gasta la acción individual, no la del equipo entero
+    end
+    return pbItemUsesAllActions_coop(item)
+  end
+
+  # 3. LIMPIEZA DE VARIABLES POR TURNO
+  alias :pbCommandPhase_coop_reset :pbCommandPhase
+  def pbCommandPhase
+    @coop_rng_winner = nil
+    @coop_rng_evaluated = false
+    pbCommandPhase_coop_reset
+  end
+
+  # 4. LÓGICA 50-50 (Quién lanza primero si ambos eligen bola)
+  def pbUsePokeBallInBattle(item, idxBattler, userBattler)
+    @coop_thrower_id = userBattler.index
+
+    if $PokemonGlobal.partner && !@coop_rng_evaluated
+      @coop_rng_evaluated = true
+      c1 = @choices[0]; c2 = @choices[2]
+
+      if c1 && c2 && c1[0] == :UseItem && c2[0] == :UseItem
+        i1 = GameData::Item.try_get(c1[1]); i2 = GameData::Item.try_get(c2[1])
+        if i1&.is_poke_ball? && i2&.is_poke_ball?
+          target1 = c1[3] || c1[2]; target2 = c2[3] || c2[2]
+          if target1 == target2
+            # Conflicto: Moneda al aire
+            @coop_rng_winner = (rand(2) == 0) ? 0 : 2
+            w_name = (@coop_rng_winner == 2) ? ($PokemonGlobal.partner[1] || "Brendan") : $player.name
+            pbDisplayBrief(_INTL("¡Ambos han intentado capturar al mismo tiempo!"))
+            pbDisplayBrief(_INTL("¡{1} desenfundó más rápido!", w_name))
+          end
+        end
+      end
+    end
+
+    # Si perdiste el sorteo, pierdes el turno de lanzamiento
+    if !@coop_rng_winner.nil? && userBattler.index != @coop_rng_winner
+      pbDisplay(_INTL("¡Demasiado tarde! ¡Ya te han ganado de mano!"))
+      @choices[userBattler.index][1] = nil 
+      return 
+    end
+
+    # Ejecución normal
+    idxBattler = userBattler.index if idxBattler < 0
+    battler = @battlers[idxBattler]
+    ItemHandlers.triggerUseInBattle(item, battler, self)
+    @choices[userBattler.index][1] = nil 
+  end
+
+  # 5. LANZAMIENTO VISUAL Y ETIQUETADO
+  def pbThrowPokeBall(idxBattler, ball, catch_rate = nil, showPlayer = false)
+    real_user = @coop_thrower_id || 0
+    battler = opposes?(idxBattler) ? @battlers[idxBattler] : @battlers[idxBattler].pbDirectOpposing(true)
+    battler = battler.allAllies[0] if battler && battler.fainted?
+
+    if battler && battler.captured
+      pbDisplay(_INTL("¡Demasiado tarde! El Pokémon ya ha sido capturado."))
+      return
+    end
+    if !battler || battler.fainted?
+      pbDisplay(_INTL("¡Pero si no hay objetivo!"))
+      return
+    end
+
+    itemName = GameData::Item.get(ball).name
+    thrower_name = (real_user == 2 && $PokemonGlobal.partner) ? ($PokemonGlobal.partner[1] || "Brendan") : $player.name
+    pbDisplayBrief(_INTL("¡{1} lanzó una {2}!", thrower_name, itemName))
+
+    if trainerBattle? && !(GameData::Item.get(ball).is_snag_ball? && battler.shadowPokemon?)
+      @scene.pbThrowAndDeflect(ball, 1)
+      pbDisplay(_INTL("¡El entrenador bloqueó tu Poké Ball!"))
+      return
+    end
+
+    pkmn = battler.pokemon
+    @criticalCapture = false
+    numShakes = pbCaptureCalc(pkmn, battler, catch_rate, ball)
+    @scene.pbThrow(ball, numShakes, @criticalCapture, battler.index, showPlayer)
+
+    case numShakes
+    when 0; pbDisplay(_INTL("¡Oh no! El Pokémon se ha liberado.")); Battle::PokeBallEffects.onFailCatch(ball, self, battler)
+    when 1; pbDisplay(_INTL("¡Vaya! Parecía que lo tenías.")); Battle::PokeBallEffects.onFailCatch(ball, self, battler)
+    when 2; pbDisplay(_INTL("¡Argh! ¡Casi lo consigues!")); Battle::PokeBallEffects.onFailCatch(ball, self, battler)
+    when 3; pbDisplay(_INTL("¡Gah! ¡Estuvo muy cerca!")); Battle::PokeBallEffects.onFailCatch(ball, self, battler)
+    when 4
+      pbDisplayBrief(_INTL("¡Ya está! ¡{1} atrapado!", pkmn.name))
+      @scene.pbThrowSuccess
+      
+      # ETIQUETADO DE PROPIEDAD
+      $COOP_CATCH_TAGS[pkmn] = real_user
+      
+      battler.captured = true
+      pbRemoveFromParty(battler.index, battler.pokemonIndex)
+      pbGainExp if Settings::GAIN_EXP_FOR_CAPTURE
+      battler.pbReset
+      @decision = (trainerBattle?) ? 1 : 4 if pbAllFainted?(battler.index)
+      
+      if GameData::Item.get(ball).is_snag_ball?
+        pkmn.owner = Pokemon::Owner.new_from_trainer(pbPlayer)
+      end
+      Battle::PokeBallEffects.onCatch(ball, self, pkmn)
+      pkmn.poke_ball = ball
+      pkmn.makeUnmega if pkmn.mega?
+      pkmn.makeUnprimal
+      pkmn.update_shadow_moves if pkmn.shadowPokemon?
+      pkmn.record_first_moves
+      pkmn.forced_form = nil if MultipleForms.hasFunction?(pkmn.species, "getForm")
+      @peer.pbOnLeavingBattle(self, pkmn, true, true)
+      @scene.pbHideCaptureBall(idxBattler)
+      @caughtPokemon.push(pkmn)
+    end
+    
+    if numShakes != 4
+      @first_poke_ball = ball if !@poke_ball_failed
+      @poke_ball_failed = true
+    end
+  end
+
+  # 6. ALMACENAMIENTO FINAL (Reparte al dueño correcto)
+  def pbStorePokemon(pkmn)
+    real_user = $COOP_CATCH_TAGS[pkmn] || 0
+    $COOP_CATCH_TAGS.delete(pkmn)
+
+    if $PokemonGlobal.partner && real_user == 2
+      Console.echo("\n[CATCH COOP] Evaluando destino de captura para Brendan...")
+      partner_name = $PokemonGlobal.partner[1] || "Brendan"
+      pbDisplay(_INTL("¡{1} fue capturado por {2}!", pkmn.name, partner_name))
+      pkmn.heal
+      pkmn.record_first_moves
+      
+      partner_data = $PokemonGlobal.partner
+      pkmn.owner.name = partner_data[1]
+      pkmn.owner.id   = (partner_data[2] == 0) ? rand(65536) | (rand(65536) << 16) : partner_data[2]
+      
+      if $player.has_pokedex
+        $player.pokedex.register(pkmn)
+        $player.pokedex.set_owned(pkmn.species)
+      end
+
+      brendan_party = partner_data[3]
+      if !brendan_party.is_a?(Array)
+        $PokemonGlobal.partner[3] = []
+        brendan_party = $PokemonGlobal.partner[3]
+      end
+
+      # [FIX LÍMITE DE EQUIPO]: Usamos la constante del motor
+      if brendan_party.length < Settings::MAX_PARTY_SIZE
+        brendan_party.push(pkmn)
+        Console.echo("[CATCH COOP] Hay espacio. Añadido al equipo activo.")
+        pbDisplay(_INTL("¡{1} se ha unido al equipo de {2}!", pkmn.name, partner_name))
+        return
+      else
+        Console.echo("[CATCH COOP] Equipo lleno. Accediendo al PC de Brendan...")
+        pbDisplay(_INTL("¡El equipo de {1} está lleno!", partner_name))
+        
+        brendan_pc = CoopStorage.get_pc
+        stored_box = brendan_pc.pbStoreCaught(pkmn)
+        
+        box_name = brendan_pc[stored_box].name
+        Console.echo("[CATCH COOP] ¡Éxito! Pokemon guardado en la caja #{stored_box} (#{box_name}).")
+        pbDisplayPaused(_INTL("¡{1} fue enviado a la Caja \"{2}\" de {3}!", pkmn.name, box_name, partner_name))
+        return
+      end
+    end
+
+    # --- Lógica Estándar (Red / Fallback) ---
+    if !pkmn.shadowPokemon?
+      if $PokemonSystem.givenicknames == 0 && pbDisplayConfirm(_INTL("¿Quieres ponerle un mote a {1}?", pkmn.name))
+        pkmn.name = @scene.pbNameEntry(_INTL("¿Mote para {1}?", pkmn.speciesName), pkmn)
+      end
+    end
+
+    stored_box = @peer.pbStorePokemon(pbPlayer, pkmn)
+    if stored_box < 0
+      pbDisplayPaused(_INTL("¡{1} se ha unido a tu equipo!", pkmn.name))
+      @initialItems[0][pbPlayer.party.length - 1] = pkmn.item_id if @initialItems
+    else
+      box_name = @peer.pbBoxName(stored_box)
+      pbDisplayPaused(_INTL("¡{1} fue enviado a la Caja \"{2}\"!", pkmn.name, box_name))
+    end
+  end
+end
+
+# =========================================================================
+#  11. FIX: AGENCIA DE JUGADOR (EL RADAR DE INTERACCIÓN)
+# =========================================================================
+
+class Game_Temp
+  attr_accessor :coop_last_interactor
+end
+
+class CoopController
+  # Reescribimos la función para que, cuando Brendan (P2) interactúe, el juego lo registre
+  def self.check_interaction(event)
+    if CoopInput.trigger?(:ACCEPT)
+      check_x, check_y = event.x, event.y
+      case event.direction
+      when 2 then check_y += 1
+      when 4 then check_x -= 1
+      when 6 then check_x += 1
+      when 8 then check_y -= 1
+      end
+
+      target = $game_map.events.values.find { |e|
+        e.x == check_x && e.y == check_y && !e.jumping? && e != event
+      }
+      return unless target
+
+      # ¡MAGIA! Marcamos que fue el Jugador 2
+      $game_temp.coop_last_interactor = 2
+
+      key_a = [$game_map.map_id, target.id, "A"]
+      key_b = [$game_map.map_id, target.id, "B"]
+      return if $game_self_switches[key_a] || $game_self_switches[key_b]
+      return if target.character_name == "" && target.trigger == 0
+
+      @@interaction_wait = 30
+      event.straighten
+      target.start
+    end
+  end
+end
+
+# La herramienta que usaremos en los eventos visuales
+def pbQuienToca?
+  return $game_temp.coop_last_interactor || 1
+end
+
+def pbGiveRandomStarter(level = 5)
+  # 1. Tu lista de iniciales posibles (¡Añade o quita los que quieras!)
+  starters = [
+    :CHARMANDER, :CYNDAQUIL, :HORSEA,   :TREECKO,
+    :ARON,       :SANDILE,   :SWINUB,   :NIDORANmA,
+    :VENIPEDE,   :RIOLU,     :SHINX,    :MAWILE,  
+    :GOTHITA,    :DUSKULL,   :LOTAD,    :TOGEPI
+  ]
+
+  # 2. El motor elige uno al azar
+  chosen    = starters.sample
+  pkmn_name = GameData::Species.get(chosen).name
+
+  # 3. Comprobamos quién ha tocado la Poké Ball con nuestro radar
+  if pbQuienToca? == 1
+    # Comprobamos si el Jugador 1 ya cogió su inicial (usando el Interruptor 50)
+    if $game_switches[50]
+      Kernel.pbMessage(_INTL("¡\\PN ya tiene un Pokémon! Deja algo para los demás."))
+      return false
+    end
+
+    Kernel.pbMessage(_INTL("¡La Poké Ball contenía un {1}!", pkmn_name))
+    pbAddPokemon(chosen, level)
+    $game_switches[50] = true # Marcamos que P1 ya tiene Pokémon
+    return true
+
+  else # Si fue el Jugador 2 (Brendan)
+    # Comprobamos si el Jugador 2 ya cogió su inicial (usando el Interruptor 51)
+    if $game_switches[51]
+      Kernel.pbMessage(_INTL("¡Tu compañero ya ha cogido su Pokémon!"))
+      return false
+    end
+
+    Kernel.pbMessage(_INTL("¡La Poké Ball contenía un {1}!", pkmn_name))
+    CoopStorage.give_starter(chosen, level)
+    $game_switches[51] = true # Marcamos que P2 ya tiene Pokémon
+    return true
+  end
+end
+
+# =========================================================================
+#  12. FIX CORE: pbNoticePlayer (CORREGIDO Y ROBUSTO)
+# =========================================================================
+
+def pbNoticePlayer(event, always_show_exclaim = false)
+  # Console.echo("--- [pbNoticePlayer] INICIO ---") # Log Opcional
+
+  # 1. IDENTIFICAR OBJETIVO (RED o BRENDAN)
+  target = $game_player
+  if $game_temp.respond_to?(:coop_last_interactor) && $game_temp.coop_last_interactor == 2
+    if defined?(CoopConfig) && $game_map.events[CoopConfig::EVENT_ID]
+      p2 = $game_map.events[CoopConfig::EVENT_ID]
+      if p2 && !p2.transparent
+        target = p2
+      end
+    end
+  end
+
+  # 2. RESOLVER EL EVENTO NPC (EL FIX CLAVE)
+  # Si nos pasan un número (ID), lo buscamos.
+  if event.is_a?(Integer)
+    event = get_character(event)
+  end
+  # Si ya es un objeto Game_Event, lo usamos tal cual.
+
+  if !event
+    Console.echo("   > ERROR CRÍTICO: No se pudo encontrar el evento NPC.")
+    return
+  end
+
+  # 3. ESPERA INTELIGENTE (SUAVIZADO)
+  # Si Brendan se está moviendo, esperamos a que termine el paso para no cortarle la animación.
+  while target.moving?
+    Graphics.update
+    Input.update
+    pbUpdateSceneMap
+  end
+
+  # 4. EXCLAMACIÓN
+  # Forzamos la exclamación si es Brendan o si no se están mirando
+  should_exclaim = always_show_exclaim || (target != $game_player) || !pbFacingEachOther(event, target)
+
+  pbExclaim(event) if should_exclaim
+
+  # 5. ENCARARSE INICIAL
+  # El NPC se gira para mirar a quien le ha descubierto
+  pbTurnTowardEvent(target, event)
+
+  # 6. MOVERSE HACIA EL OBJETIVO (BUCLE DE ACERCAMIENTO)
+  # Movemos al NPC paso a paso hasta que esté pegado al objetivo (Distancia <= 1)
+  max_steps  = 20 # Seguridad anti-cuelgue
+  steps_taken = 0
+
+  loop do
+    sx   = event.x - target.x
+    sy   = event.y - target.y
+    dist = sx.abs + sy.abs
+
+    break if dist <= 1
+    break if steps_taken >= max_steps
+
+    move_dir = 0
+    if sx.abs > sy.abs
+      move_dir = (sx > 0) ? 4 : 6 # Izquierda : Derecha
+    else
+      move_dir = (sy > 0) ? 8 : 2 # Arriba : Abajo
+    end
+
+    case move_dir
+    when 2 then event.move_down
+    when 4 then event.move_left
+    when 6 then event.move_right
+    when 8 then event.move_up
+    end
+
+    while event.moving?
+      Graphics.update
+      Input.update
+      pbUpdateSceneMap
+    end
+
+    steps_taken += 1
+  end
+
+  # 7. ENCARAMIENTO FINAL
+  # Cara a cara para el diálogo
+  pbTurnTowardEvent(event, target)
+end
+
+# =========================================================================
+# 13. HERRAMIENTAS PARA EL DISEÑADOR (Eventos Fáciles)
+# =========================================================================
+
+# 1. ¿Quién me está hablando?
+def pbEsBrendan?
+  return $game_temp.respond_to?(:coop_last_interactor) && $game_temp.coop_last_interactor == 2
+end
+
+# 2. Obtener el nombre del que habla
+def pbNombreHablante
+  if pbEsBrendan?
+    return $game_variables[12].is_a?(String) ? $game_variables[12] : "Brendan"
+  else
+    return $player.name
+  end
+end
+
+def pbCurarAAmbos
+  # 1. Curar al Jugador 1 (Estándar)
+  $player.heal_party
+
+  # 2. Curar al Jugador 2 (Brendan)
+  p2_party = CoopStorage.get_party
+
+  if p2_party && !p2_party.empty?
+    p2_party.each { |pkmn| pkmn.heal }
+    CoopStorage.save_party_direct(p2_party)
+    if $PokemonGlobal.partner
+      $PokemonGlobal.partner[3] = p2_party
+    end
+  end
+  
+  # 3. [NUEVO] GUARDAR PUNTO DE RESPAWN
+  # Esto marca el lugar actual como el sitio donde aparecerán si pierden
+  pbSetPokemonCenter
+end
+
+# -------------------------------------------------------------------------
+# 3. Dar un Pokémon al jugador que interactúa
+# -------------------------------------------------------------------------
+def pbDarPokemon(species, level = 5)
+  if pbQuienToca? == 1
+    # Lógica nativa para Red
+    return pbAddPokemon(species, level)
+  else
+    # Lógica custom para Brendan
+    pkmn = Pokemon.new(species, level)
+    partner_name = $PokemonGlobal.partner ? $PokemonGlobal.partner[1] : "Brendan"
+    
+    # Asignamos a Brendan como dueño original (OT)
+    pkmn.owner.name = partner_name
+    pkmn.owner.id = $PokemonGlobal.partner[2] if $PokemonGlobal.partner
+    pkmn.record_first_moves
+
+    brendan_party = CoopStorage.get_party
+    if brendan_party.length < Settings::MAX_PARTY_SIZE
+      brendan_party.push(pkmn)
+      CoopStorage.save_party_direct(brendan_party)
+      pbMessage(_INTL("¡{1} recibió a {2}!", partner_name, pkmn.name))
+      return true
+    else
+      brendan_pc = CoopStorage.get_pc
+      stored_box = brendan_pc.pbStoreCaught(pkmn)
+      box_name = brendan_pc[stored_box].name
+      pbMessage(_INTL("¡{1} recibió a {2}!", partner_name, pkmn.name))
+      pbMessage(_INTL("¡El equipo está lleno! {1} fue enviado a la Caja \"{2}\".", pkmn.name, box_name))
+      return true
+    end
+  end
+end
+
+# -------------------------------------------------------------------------
+# 4. Dar un Huevo al jugador que interactúa
+# -------------------------------------------------------------------------
+def pbDarHuevo(species)
+  if pbQuienToca? == 1
+    # Lógica nativa para Red
+    return pbGenerateEgg(species)
+  else
+    # Lógica custom para Brendan
+    pkmn = Pokemon.new(species, 1)
+    pkmn.name           = _INTL("Huevo")
+    pkmn.steps_to_hatch = pkmn.species_data.hatch_steps
+    pkmn.calc_stats
+    
+    partner_name = $PokemonGlobal.partner ? $PokemonGlobal.partner[1] : "Brendan"
+    
+    brendan_party = CoopStorage.get_party
+    if brendan_party.length < Settings::MAX_PARTY_SIZE
+      brendan_party.push(pkmn)
+      CoopStorage.save_party_direct(brendan_party)
+      pbMessage(_INTL("¡{1} recibió un Huevo misterioso!", partner_name))
+      return true
+    else
+      brendan_pc = CoopStorage.get_pc
+      stored_box = brendan_pc.pbStoreCaught(pkmn)
+      box_name = brendan_pc[stored_box].name
+      pbMessage(_INTL("¡{1} recibió un Huevo misterioso!", partner_name))
+      pbMessage(_INTL("¡El equipo está lleno! El Huevo fue enviado a la Caja \"{1}\".", box_name))
+      return true
+    end
+  end
+end
+# =========================================================================
+#  14. SISTEMA DE RELEVO DE BATALLA (TAG TEAM FAILSAFE v4: MAGIC MASK)
+# =========================================================================
+
+module CoopStorage
+  def self.p2_has_able_pokemon?
+    party = get_party
+    return false if !party || party.empty?
+    return party.any? { |pkmn| pkmn.able? }
+  end
+
+  def self.perform_emergency_swap
+    p1_current_party = $player.party
+    p2_current_party = get_party
+    $player.party = p2_current_party
+    save_party_direct(p1_current_party)
+    return true
+  end
+end
+
+# B. INTERCEPCIÓN DE BATALLAS SALVAJES
+class WildBattle
+  class << self
+    unless method_defined?(:start_core_coop_original)
+      alias :start_core_coop_original :start_core
+    end
+
+    def start_core(*args)
+      swapped = false
+      real_partner_backup = nil
+      
+      if $player.able_pokemon_count == 0 && CoopStorage.p2_has_able_pokemon?
+        # 1. SWAP DE EQUIPO
+        CoopStorage.perform_emergency_swap
+        swapped = true
+        
+        # 2. SWAP DE IDENTIDAD (MAGIA NEGRA)
+        CoopStorage.apply_brendan_disguise
+        
+        # 3. SWAP DE CONTROLES
+        $game_temp.coop_emergency_mode = true
+        
+        # 4. OCULTAR PARTNER
+        if $PokemonGlobal.partner
+           real_partner_backup = $PokemonGlobal.partner
+           $PokemonGlobal.partner = nil 
+        end
+        
+        partner_name = real_partner_backup ? real_partner_backup[1] : "Brendan"
+        Kernel.pbMessage(_INTL("¡{1} entra al combate para protegerte!", partner_name))
+      end
+
+      outcome = start_core_coop_original(*args)
+
+      if swapped
+        # RESTAURAR TODO
+        CoopStorage.perform_emergency_swap
+        CoopStorage.remove_brendan_disguise # Quitamos el disfraz
+        $game_temp.coop_emergency_mode = false 
+        
+        if real_partner_backup
+           $PokemonGlobal.partner = real_partner_backup
+           $PokemonGlobal.partner[3] = CoopStorage.get_party
+        end
+      end
+
+      return outcome
+    end
+  end
+end
+
+# C. INTERCEPCIÓN DE BATALLAS DE ENTRENADOR
+class TrainerBattle
+  class << self
+    unless method_defined?(:start_core_coop_original)
+      alias :start_core_coop_original :start_core
+    end
+
+    def start_core(*args)
+      swapped = false
+      real_partner_backup = nil
+      
+      if $player.able_pokemon_count == 0 && CoopStorage.p2_has_able_pokemon?
+        CoopStorage.perform_emergency_swap
+        swapped = true
+        CoopStorage.apply_brendan_disguise
+        $game_temp.coop_emergency_mode = true
+        
+        if $PokemonGlobal.partner
+           real_partner_backup = $PokemonGlobal.partner
+           $PokemonGlobal.partner = nil 
+        end
+        
+        partner_name = real_partner_backup ? real_partner_backup[1] : "Brendan"
+        Kernel.pbMessage(_INTL("¡{1} toma el mando de la batalla!", partner_name))
+      end
+
+      outcome = start_core_coop_original(*args)
+
+      if swapped
+        CoopStorage.perform_emergency_swap
+        CoopStorage.remove_brendan_disguise
+        $game_temp.coop_emergency_mode = false
+        
+        if real_partner_backup
+           $PokemonGlobal.partner = real_partner_backup
+           $PokemonGlobal.partner[3] = CoopStorage.get_party
+        end
+      end
+
+      return outcome
+    end
+  end
+end
+
+# =========================================================================
+#  15. FIX: PRIVILEGIOS DE COLISIÓN VIP PARA BRENDAN
+# =========================================================================
+class Game_Event < Game_Character
+  # Interceptamos el motor de físicas (colisiones) nativo
+  alias passable_coop_vip_override? passable?
+  
+  def passable?(x, y, d, strict = false)
+    # 1. Dejamos que el motor decida normalmente
+    can_pass = passable_coop_vip_override?(x, y, d, strict)
+    
+    # 2. Si el motor dice "NO puedes pasar" y este evento es Brendan, apelamos la decisión.
+    if !can_pass && @id == CoopConfig::EVENT_ID
+      new_x = x + (d == 6 ? 1 : d == 4 ? -1 : 0)
+      new_y = y + (d == 2 ? 1 : d == 8 ? -1 : 0)
+      
+      # Buscamos qué nos está bloqueando en esa baldosa
+      blockers = $game_map.events.values.select { |e| 
+        e.x == new_x && e.y == new_y && e != self && !e.through 
+      }
+      
+      # Si HAY obstáculos, pero TODOS son eventos invisibles (entrenadores derrotados, carteles...)
+      if blockers.length > 0 && blockers.all? { |e| e.character_name == "" && e.tile_id == 0 }
+        
+        # --- EL TRUCO MAESTRO ---
+        # Hacemos a los eventos invisibles temporalmente intangibles
+        blockers.each { |e| e.through = true }
+        
+        # Volvemos a preguntarle al motor si se puede pasar. 
+        # Esto forzará al juego a comprobar la colisión REAL del suelo (la baldosa)
+        can_pass = passable_coop_vip_override?(x, y, d, strict)
+        
+        # Les devolvemos su solidez original para no romper nada
+        blockers.each { |e| e.through = false }
+      end
+    end
+    
+    return can_pass
+  end
+end
+
+# =========================================================================
+#  16. FIX: BLACKOUT Y RESPAWN COOPERATIVO (AMBULANCIA CON LOGS)
+# =========================================================================
+
+if !defined?($coop_startover_aliased)
+  alias pbStartOver_coop_original pbStartOver
+  $coop_startover_aliased = true
+end
+
+def pbStartOver(gameover = false)
+  Console.echo("\n[AMBULANCIA] --- INICIANDO PROTOCOLO DE RESPAWN ---")
+  
+  # 1. CURAR AL EQUIPO DE BRENDAN
+  p2_party = CoopStorage.get_party
+  if p2_party && !p2_party.empty?
+    p2_party.each { |pkmn| pkmn.heal }
+    CoopStorage.save_party_direct(p2_party)
+    $PokemonGlobal.partner[3] = p2_party if $PokemonGlobal.partner
+    Console.echo("[AMBULANCIA] Equipo de Brendan curado completamente.") # ¡Adiós al símbolo de porcentaje!
+  end
+
+  # 2. LECTURA DE MEMORIA ACTUAL
+  Console.echo("[AMBULANCIA] Memoria del Motor - Mapa ID: #{$PokemonGlobal.pokecenterMapId || 'NULO'} | X: #{$PokemonGlobal.pokecenterX || 'NULO'} | Y: #{$PokemonGlobal.pokecenterY || 'NULO'}")
+
+  # 3. FORZAR PUNTO DE RESPAWN SEGURO (Si no hay Centro Pokémon)
+  if !$PokemonGlobal.pokecenterMapId || $PokemonGlobal.pokecenterMapId < 0
+    Console.echo("[AMBULANCIA] ¡Alerta! No hay Centro guardado. Forzando rescate al Mapa #{CoopConfig::DEFAULT_RESPAWN_MAP}.")
+    $PokemonGlobal.pokecenterMapId = CoopConfig::DEFAULT_RESPAWN_MAP
+    $PokemonGlobal.pokecenterX     = CoopConfig::DEFAULT_RESPAWN_X
+    $PokemonGlobal.pokecenterY     = CoopConfig::DEFAULT_RESPAWN_Y
+    $PokemonGlobal.pokecenterDirection = 2
+  else
+    Console.echo("[AMBULANCIA] Destino validado por el motor.")
+  end
+
+  Console.echo("[AMBULANCIA] Destino FINAL de teletransporte - Mapa: #{$PokemonGlobal.pokecenterMapId} | X: #{$PokemonGlobal.pokecenterX} | Y: #{$PokemonGlobal.pokecenterY}")
+  Console.echo("[AMBULANCIA] --- EJECUTANDO BLACKOUT NATIVO ---\n")
+
+  # 4. EJECUTAR EL BLACKOUT ORIGINAL
+  pbStartOver_coop_original(gameover)
+end
+# =========================================================================
+#  17. FIX: ACCESO FÍSICO AL PC DEL CENTRO POKÉMON
+# =========================================================================
+
+if !defined?($coop_pokecenter_pc_aliased)
+  alias pbPokeCenterPC_coop_original pbPokeCenterPC
+  $coop_pokecenter_pc_aliased = true
+end
+
+def pbPokeCenterPC
+  # 1. ¿Quién está tocando el teclado físico?
+  if pbQuienToca? == 2 && $PokemonGlobal.partner
+    partner_name = $PokemonGlobal.partner[1] || "Brendan"
+    
+    # Mensaje inmersivo para Brendan
+    pbMessage("\\se[PC open]" + _INTL("¡{1} encendió el PC!", partner_name))
+    
+    # Redirigimos directamente a nuestra función blindada de la Sección 3
+    # (La que hace el backup, pone el disfraz y carga las cajas correctas)
+    CoopMenu.open_p2_pc_screen
+    
+    pbSEPlay("PC close")
+    return
+  end
+  
+  # 2. Si es Red (o si Brendan no está activo), ejecuta el PC normal
+  pbPokeCenterPC_coop_original
+end
